@@ -1,0 +1,80 @@
+@font-face {
+  font-family: 'Doom';
+  src: url('../fonts/Doom2016Text-GOlBq.ttf') format('truetype');
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #000000; 
+  font-family: 'Doom', 'Press Start 2P', monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#menu-container {
+  display: block;
+  text-align: center;
+  color: white;
+  width: 100%; 
+  max-width: 700px; 
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.cover-image {
+  width: 100%;
+  max-width: 550px; 
+  height: auto;
+  display: block;
+  margin: 10px auto 30px auto;
+  border: 4px solid #4a1a08; 
+  box-shadow: 0 0 15px #ff4500a0, 0 0 25px #ff000080;
+  border-radius: 5px;
+}
+
+.infernal-background-theme {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  z-index: -1;
+  opacity: 0.25;
+}
+
+.menu {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 25px; 
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.menu-button-img {
+  width: 200px; 
+  height: auto;
+  cursor: pointer;
+  transition: transform 0.1s ease-out, filter 0.1s ease-out;
+}
+
+.menu-button-img:hover {
+  transform: scale(1.08);
+  filter: brightness(1.2) drop-shadow(5px 5px 7px rgba(255,100,0,0.5));
+}
+
+canvas#canvas {
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block; 
+}

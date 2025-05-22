@@ -1,1081 +1,655 @@
+// js/raycasting.js
+
+/**
+ * @file Main game logic file for the Raycasting engine.
+ * Handles game initialization, main loop, rendering, input, and object management.
+ * Requires: utils.js, config.js, and all class definitions (Level, Ray, Sprite, Player, Enemy, etc.).
+ */
+
 var canvas;
-var ctx;
-var FPS = 50;
+var gameContext;
 
-//DIMENSIONES EN PIXELS DEL CANVAS
-var canvasAncho = 500;
-var canvasAlto = 500;
+var gameLevel;
+var player;
+let lastPlayerFireTime = 0;
+let playerShootInterval = null;
+/** @type {number} 0 for Raycasting 3D view, 1 for 2D Map view. */
+var renderMode = 0;
+var enemyLaughIntervalId;
 
-var tamTile = 50;
+// --- Game Assets (Images) ---
+var wallTexturesImage;
+var armorImage;
+var enemyImage;
+var enemyDeadImage;
+var enemyDemonAttackImage;
+var playerAttackOrbImage;
+var demonAttackOrbImage;
+var hudBackgroundImage;
+var playerAttackStateImage;
+var playerNeutralStateImage;
+var enemyDeadAngelImage;
+var ammoPackImage;
+var healthPackImage;
+var torchFrames = [];
+let gameMusicStarted = false;
+const NUMBER_OF_TORCH_FRAMES = 8;
 
+// --- Game Object Collections ---
+/** @type {Sprite[]} Array of ALL Sprite objects in the game. */
+var sprites = [];
+/** @type {Enemy[]} Array of Enemy AI/logic objects. */
+var enemies = [];
+/** @type {Projectile[]} Array of active player Projectile objects. */
+var playerProjectiles = [];
+/** @type {EnemyProjectile[]} Array for active enemy projectiles. */
+var enemyProjectiles = [];
+/** @type {RisingSpriteEffect[]} Array of RisingSpriteEffect objects. */
+var risingSpriteEffects = [];
+/** @type {number[]} Array for Z-buffering, storing distances for each screen column. */
+var zBuffer = [];
 
-//OBJETOS
-var escenario;
-var jugador;
+// --- Damage Flash Effect ---
+var damageFlashAlpha = 0;
+var damageFlashStartTime = 0;
 
+// --- Configurable Item/Enemy Quantities (defaults if not in config) ---
+const NUMBER_OF_ENEMIES = (typeof NUM_ENEMIES_CONFIG !== 'undefined') ? NUM_ENEMIES_CONFIG : 10;
+const NUMBER_OF_AMMO_PACKS = (typeof NUM_AMMO_PACKS_CONFIG !== 'undefined') ? NUM_AMMO_PACKS_CONFIG : 10;
+const NUMBER_OF_HEALTH_PACKS = (typeof NUM_HEALTH_PACKS_CONFIG !== 'undefined') ? NUM_HEALTH_PACKS_CONFIG : 3;
+const NUMBER_OF_ARMOR_PACKS = (typeof NUM_ARMOR_PACKS_CONFIG !== 'undefined') ? NUM_ARMOR_PACKS_CONFIG : 5;
 
-var modo = 0;	//Raycasting = 0     Mapa = 1
+// --- Torch Animation State ---
+var currentTorchFrameIndex = 0;
+var lastTorchFrameUpdateTime = 0;
 
-
-
-
-
-//----------------------------------------------------------------------
-//TECLADO
-document.addEventListener('keydown', function (tecla) {
-
-	switch (tecla.keyCode) {
-
-		case 38:
-			jugador.arriba();
-			break;
-
-		case 40:
-			jugador.abajo();
-			break;
-
-		case 39:
-			jugador.derecha();
-			break;
-
-		case 37:
-			jugador.izquierda();
-			break;
-		
-		case 32:
-			jugador.dispara();
-			break;
-	}
-
-
-});
-
-document.addEventListener('keyup', function (tecla) {
-
-	switch (tecla.keyCode) {
-
-		case 38:
-			jugador.avanzaSuelta();
-			break;
-
-		case 40:
-			jugador.avanzaSuelta();
-			break;
-
-		case 39:
-			jugador.giraSuelta();
-			break;
-
-		case 37:
-			jugador.giraSuelta();
-			break;
-
-		case 32:
-			jugador.dispara();
-			break;
-			
-		case 32:
-			cambiaModo();
-			break;
-	}
-});
-
-
-
-
-function cambiaModo() {
-	if (modo == 0)
-		modo = 1;
-	else
-		modo = 0;
-}
-
-
-
-
-//----------------------------------------------------------------------
-//NIVEL 1
-
-var nivel1 = [
-	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	[1, 0, 0, 0, 0, 0, 0, 1, 1, 1],
-	[1, 0, 0, 0, 0, 0, 0, 1, 1, 1],
-	[1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-	[1, 0, 1, 1, 1, 0, 0, 0, 0, 1],
-	[1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-	[1, 0, 0, 0, 1, 0, 0, 1, 1, 1],
-	[1, 0, 0, 1, 1, 0, 0, 1, 1, 1],
-	[1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+// --- Level Data ---
+var levelOneLayout = [
+	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	[1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	[1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1],
+	[1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	[1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1],
+	[1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+	[1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1],
+	[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+	[1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1],
+	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 ];
+let currentlyOccupiedTileCoords = [];
 
 
-
-
-
-
-//----------------------------------------------------------------------
-//CLASE PARA EL ESCENARIO
-
-class Level {
-
-	constructor(can, con, arr) {
-		this.canvas = can;
-		this.ctx = con;
-		this.matriz = arr;
-
-		//DIMENSIONES MATRIZ
-		this.altoM = this.matriz.length;
-		this.anchoM = this.matriz[0].length;
-
-		//DIMENSIONES REALES CANVAS
-		this.altoC = this.canvas.height;
-		this.anchoC = this.canvas.width;
-
-		//TAMAÑO DE LOS TILES
-		//this.altoT = parseInt(this.altoC / this.altoM);
-		//this.anchoT = parseInt(this.anchoC / this.anchoM);
-		this.altoT = tamTile;
-		this.anchoT = tamTile;
-
-	}
-
-
-	//LE PASAMOS UNA CASILLA Y NOS DICE SI HAY COLISIÓN
-	colision(x, y) {
-		var choca = false;
-		if (this.matriz[y][x] != 0)
-			choca = true;
-		return choca;
-	}
-
-
-	tile(x, y) {
-		var casillaX = parseInt(x / this.anchoT);
-		var casillaY = parseInt(y / this.altoT);
-		return (this.matriz[casillaY][casillaX]);
-	}
-
-
-
-	dibuja() {
-
-		var color;
-
-
-		for (var y = 0; y < this.altoM; y++) {
-			for (var x = 0; x < this.anchoM; x++) {
-
-				if (this.matriz[y][x] != 0)
-					color = '#000000';
-				else
-					color = '#666666';
-
-				this.ctx.fillStyle = color;
-				this.ctx.fillRect(x * this.anchoT, y * this.altoT, this.anchoT, this.altoT);
-			}
-		}
-
-
-	}
-
-
+/**
+ * Finds a specified number of random empty tile coordinates from the given map layout.
+ * @param {number[][]} levelLayout - The 2D array representing the map.
+ * @param {number} quantity - The number of empty spots to find.
+ * @param {{r: number, c: number}[]} [occupiedCoords=[]] - An array of coordinates already considered occupied.
+ * @returns {{r: number, c: number}[]} An array of found empty spot coordinates.
+ */
+function findRandomEmptySpotCoordinates(levelLayout, quantity, occupiedCoords = []) {
+    if (!levelLayout || levelLayout.length === 0 || levelLayout[0].length === 0) {
+        console.error("RANDOM_SPOTS: Invalid levelLayout provided.");
+        return [];
+    }
+    let availableEmptySpots = [];
+    for (let r = 1; r < levelLayout.length - 1; r++) {
+        for (let c = 1; c < levelLayout[0].length - 1; c++) {
+            if (levelLayout[r][c] === 0) {
+                let isOccupied = occupiedCoords.some(spot => spot.r === r && spot.c === c);
+                if (!isOccupied) {
+                    availableEmptySpots.push({ r: r, c: c });
+                }
+            }
+        }
+    }
+    let selectedSpots = [];
+    for (let i = 0; i < quantity && availableEmptySpots.length > 0; i++) {
+        const randomIndex = Math.floor(Math.random() * availableEmptySpots.length);
+        selectedSpots.push(availableEmptySpots.splice(randomIndex, 1)[0]);
+    }
+    if (selectedSpots.length < quantity) {
+        console.warn(`RANDOM_SPOTS: Could only find ${selectedSpots.length}/${quantity} empty spots requested.`);
+    }
+    return selectedSpots;
 }
 
+// --- Keyboard Input Handling ---
+document.addEventListener('keydown', function (event) {
+    if (!player || (player && player.health <= 0 && renderMode === 0)) return;
+    if (player && player.health <= 0 && event.keyCode !== 190) return;
 
-//-----------------------------------------------------------------------
+    switch (event.keyCode) {
+        case 38: player.startMovingForward(); break;    // Up arrow
+        case 40: player.startMovingBackward(); break;   // Down arrow
+        case 39: player.startTurningRight(); break;     // Right arrow
+        case 37: player.startTurningLeft(); break;      // Left arrow
+        case 32: startPlayerShooting(); break;          // Space bar
+    }
+});
+document.addEventListener('keyup', function (event) {
+    if (!player || (player && player.health <= 0 && renderMode === 0)) return;
+    if (player && player.health <= 0 && event.keyCode !== 190) return;
 
-//La usaremos para evitar que el ángulo crezca sin control
-//una vez pasado de 2Pi, que vuelva a empezar
-//usamos la función módulo
+    switch (event.keyCode) {
+        case 38: player.stopAxialMovement(); break;
+        case 40: player.stopAxialMovement(); break;
+        case 39: player.stopRotationalMovement(); break;
+        case 37: player.stopRotationalMovement(); break;
+        case 32: stopPlayerShooting(); break;
+        case 190: toggleRenderMode(); break;
+    }
+});
 
-function normalizaAngulo(angulo) {
-	angulo = angulo % (2 * Math.PI);
+document.addEventListener('keydown', function (event) {
+    if (!gameMusicStarted && player && player.health > 0) {
+        const musicElement = document.getElementById('inGameMusic');
+        if (musicElement && musicElement.paused) {
+            musicElement.volume = 0.25;
+            let playPromise = musicElement.play();
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    gameMusicStarted = true;
+                }).catch(error => {
+                    console.warn("MUSIC: Playback failed even on keydown:", error.name, error.message);
+                });
+            }
+        }
+    }
+});
 
-	if (angulo < 0) {
-		angulo = (2 * Math.PI) + angulo;	//si es negativo damos toda la vuelta en el otro sentido
-	}
+// --- Player Shooting Mechanics ---
+/**
+ * Handles the player firing a projectile.
+ * Checks ammo, cooldown, and creates a new projectile.
+ */
+function firePlayerProjectile() {
+    if (!player || player.health <= 0 || !playerAttackOrbImage || !playerAttackOrbImage.complete || !playerAttackOrbImage.naturalHeight || !gameContext) {
+        return;
+    }
+    const currentTime = Date.now();
+    if (player.ammo > 0 && (currentTime - lastPlayerFireTime) >= FIRE_COOLDOWN) {
+        lastPlayerFireTime = currentTime;
+        player.playerActionState = 1;
+        player.ammo -= 1;
 
-	return angulo;
+        if (typeof playSoundEffect === 'function') {
+            playSoundEffect("music/magicAttack.mp3", 0.2);
+        }
+
+        const projectileSpeed = 3;
+        const startOffsetX = Math.cos(player.rotationAngle) * (tileSize * 0.3);
+        const startOffsetY = Math.sin(player.rotationAngle) * (tileSize * 0.3);
+
+        let newProjectile = new Projectile(
+            player.x + startOffsetX, player.y + startOffsetY,
+            player.rotationAngle, projectileSpeed, playerAttackOrbImage, gameContext
+        );
+        playerProjectiles.push(newProjectile);
+        sprites.push(newProjectile.sprite);
+    }
 }
 
-
-function convierteRadianes(angulo) {
-	angulo = angulo * (Math.PI / 180);
-	return angulo;
+/** Starts continuous firing if the shoot button is held. */
+function startPlayerShooting() {
+    if (playerShootInterval || !player || player.health <= 0) return;
+    firePlayerProjectile();
+    playerShootInterval = setInterval(firePlayerProjectile, FIRE_COOLDOWN);
 }
 
-
-function distanciaEntrePuntos(x1, y1, x2, y2) {
-	return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+/** Stops continuous firing. */
+function stopPlayerShooting() {
+    clearInterval(playerShootInterval);
+    playerShootInterval = null;
+    if (player && player.health > 0) player.playerActionState = 0;
 }
 
-
-//============================================================================================
-
-class Rayo {
-
-	constructor(con, escenario, x, y, anguloJugador, incrementoAngulo, columna) {
-
-		this.ctx = con;
-		this.escenario = escenario;
-
-		this.x = x;
-		this.y = y;
-
-		this.incrementoAngulo = incrementoAngulo;
-		this.anguloJugador = anguloJugador;
-		this.angulo = anguloJugador + incrementoAngulo;
-
-
-		this.wallHitX = 0;
-		this.wallHitY = 0;
-
-		//LO SUSTITUIREMOS LUEGO POR VARIABLES LOCALES
-		this.wallHitXHorizontal = 0;	//colisión con pared
-		this.wallHitYHorizontal = 0;	//colisicón con pared
-
-		this.wallHitXVertical = 0;	//colisión con pared
-		this.wallHitYVertical = 0;	//colisicón con pared
-
-
-		this.columna = columna;		//para saber la columna que hay que renderizar
-		this.distancia = 0;	//para saber el tamaño de la pared al hacer el render
-
-
-		this.pixelTextura = 0;	//pixel / columna de la textura
-		this.idTextura = 0;		//valor de la matriz
-
-
-		this.distanciaPlanoProyeccion = (canvasAncho / 2) / Math.tan(FOV / 2);
-		//============================================
-		//PRUEBAS
-
-		this.hCamara = 0; //movimiento vertical de la camara
-
-
-	}
-
-
-	//HAY QUE NORMALIZAR EL ÁNGULO PARA EVITAR QUE SALGA NEGATIVO
-	setAngulo(angulo) {
-		this.anguloJugador = angulo;
-		this.angulo = normalizaAngulo(angulo + this.incrementoAngulo);
-	}
-
-
-	cast() {
-
-		this.xIntercept = 0;
-		this.yIntercept = 0;
-
-		this.xStep = 0;
-		this.yStep = 0;
-
-
-		//TENEMOS QUE SABER EN QUÉ DIRECCIÓN VA EL RAYO
-		this.abajo = false;
-		this.izquierda = false;
-
-
-		if (this.angulo < Math.PI)
-			this.abajo = true;
-
-		if (this.angulo > Math.PI / 2 && this.angulo < 3 * Math.PI / 2)
-			this.izquierda = true;
-
-
-		//=======================================================================
-		// HORIZONTAL									
-		var choqueHorizontal = false;	//detectamos si hay un muro
-
-
-		//BUSCAMOS LA PRIMERA INTERSECCIÓN HORIZONTAL (X,Y)
-		this.yIntercept = Math.floor(this.y / tamTile) * tamTile; 						//el Y es fácil, se redondea por abajo para conocer el siguiente
-
-		//SI APUNTA HACIA ABAJO, INCREMENTAMOS 1 TILE
-		if (this.abajo)
-			this.yIntercept += tamTile;		//no se redondea por abajo, sino por arriba, así que sumamos 1 a la Y
-
-
-		//SE LE SUMA EL CATETO ADYACENTE
-		var adyacente = (this.yIntercept - this.y) / Math.tan(this.angulo);	//calculamos la x con la tangente
-		this.xIntercept = this.x + adyacente;
-
-
-
-		//------------------------------------------------------------------------
-		//CALCULAMOS LA DISTANCIA DE CADA PASO
-		this.yStep = tamTile;								//al colisionar con la Y, la distancia al próximo es la del tile
-		this.xStep = this.yStep / Math.tan(this.angulo);	//calculamos el dato con la tangente
-
-
-		//SI VAMOS HACIA ARRIBA O HACIA LA IZQUIERDA, EL PASO ES NEGATIVO
-
-		if (!this.abajo)
-			this.yStep = -this.yStep;
-
-
-		//CONTROLAMOS EL INCREMENTO DE X, NO SEA QUE ESTÉ INVERTIDO
-		if ((this.izquierda && this.xStep > 0) || (!this.izquierda && this.xStep < 0)) {
-			this.xStep *= -1;
-		}
-
-
-
-		//COMO LAS INTERSECCIONES SON LÍNEAS, TENEMOS QUE AÑADIR UN PIXEL EXTRA O QUITARLO PARA QUE ENTRE
-		//DENTRO DE LA CASILLA
-
-		var siguienteXHorizontal = this.xIntercept;
-		var siguienteYHorizontal = this.yIntercept;
-
-		//SI APUNTA HACIA ARRIBA, FORZAMOS UN PIXEL EXTRA
-		if (!this.abajo)
-			siguienteYHorizontal--;
-
-
-		//BUCLE PARA BUSCAR EL PUNTO DE COLISIÓN
-		while (!choqueHorizontal) {
-
-			//OBTENEMOS LA CASILLA (REDONDEANDO POR ABAJO)
-			var casillaX = parseInt(siguienteXHorizontal / tamTile);
-			var casillaY = parseInt(siguienteYHorizontal / tamTile);
-
-			if (this.escenario.colision(casillaX, casillaY)) {
-				choqueHorizontal = true;
-				this.wallHitXHorizontal = siguienteXHorizontal;
-				this.wallHitYHorizontal = siguienteYHorizontal;
-			}
-
-			else {
-				siguienteXHorizontal += this.xStep;
-				siguienteYHorizontal += this.yStep;
-			}
-		}
-
-		//=======================================================================
-		// VERTICAL									
-		var choqueVertical = false;	//detectamos si hay un muro
-
-		//BUSCAMOS LA PRIMERA INTERSECCIÓN VERTICAL (X,Y)
-		this.xIntercept = Math.floor(this.x / tamTile) * tamTile; 		//el x es fácil, se redondea por abajo para conocer el siguiente
-
-		//SI APUNTA HACIA LA DERECHA, INCREMENTAMOS 1 TILE
-		if (!this.izquierda)
-			this.xIntercept += tamTile;		//no se redondea por abajo, sino por arriba, así que sumamos 1 a la X
-
-		//SE LE SUMA EL CATETO OPUESTO
-		var opuesto = (this.xIntercept - this.x) * Math.tan(this.angulo);
-		this.yIntercept = this.y + opuesto;
-
-
-		//------------------------------------------------------------------------
-		//CALCULAMOS LA DISTANCIA DE CADA PASO
-		this.xStep = tamTile;								//al colisionar con la X, la distancia al próximo es la del tile
-
-		//SI VA A LA IZQUIERDA, INVERTIMOS
-		if (this.izquierda)
-			this.xStep *= -1;
-
-
-		this.yStep = tamTile * Math.tan(this.angulo);	//calculamos el dato con la tangente
-
-		//CONTROLAMOS EL INCREMENTO DE Y, NO SEA QUE ESTÉ INVERTIDO
-		if ((!this.abajo && this.yStep > 0) || (this.abajo && this.yStep < 0)) {
-			this.yStep *= -1;
-		}
-
-		//COMO LAS INTERSECCIONES SON LÍNEAS, TENEMOS QUE AÑADIR UN PIXEL EXTRA O QUITARLO PARA QUE ENTRE
-		//DENTRO DE LA CASILLA
-
-		var siguienteXVertical = this.xIntercept;
-		var siguienteYVertical = this.yIntercept;
-
-
-		//SI APUNTA HACIA IZQUIERDA, FORZAMOS UN PIXEL EXTRA
-		if (this.izquierda)
-			siguienteXVertical--;
-
-
-		//BUCLE PARA BUSCAR EL PUNTO DE COLISIÓN
-		while (!choqueVertical && (siguienteXVertical >= 0 && siguienteYVertical >= 0 && siguienteXVertical < canvasAncho && siguienteYVertical < canvasAlto)) {
-
-			//OBTENEMOS LA CASILLA (REDONDEANDO POR ABAJO)
-			var casillaX = parseInt(siguienteXVertical / tamTile);
-			var casillaY = parseInt(siguienteYVertical / tamTile);
-
-
-			if (this.escenario.colision(casillaX, casillaY)) {
-				choqueVertical = true;
-				this.wallHitXVertical = siguienteXVertical;
-				this.wallHitYVertical = siguienteYVertical;
-			}
-
-			else {
-				siguienteXVertical += this.xStep;
-				siguienteYVertical += this.yStep;
-			}
-		}
-
-
-		//============================================================
-		//MIRAMOS CUÁL ES EL MÁS CORTO ¿VERTICAL U HORIZONTAL?
-
-
-		//INICIALIZAMOS CON DISTANCIAS GRANDES PARA QUE SEPA CUAL LE TOCA
-		var distanciaHorizontal = 9999;
-		var distanciaVertical = 9999;
-
-		if (choqueHorizontal) {
-			distanciaHorizontal = distanciaEntrePuntos(this.x, this.y, this.wallHitXHorizontal, this.wallHitYHorizontal);
-		}
-
-		if (choqueVertical) {
-			distanciaVertical = distanciaEntrePuntos(this.x, this.y, this.wallHitXVertical, this.wallHitYVertical);
-		}
-
-		//COMPARAMOS LAS DISTANCIAS
-		if (distanciaHorizontal < distanciaVertical) {
-			this.wallHitX = this.wallHitXHorizontal;
-			this.wallHitY = this.wallHitYHorizontal;
-			this.distancia = distanciaHorizontal;
-
-
-			//PIXEL TEXTURA
-			var casilla = parseInt(this.wallHitX / tamTile);
-			this.pixelTextura = this.wallHitX - (casilla * tamTile);
-
-			//ID TEXTURA
-			this.idTextura = this.escenario.tile(this.wallHitX, this.wallHitY);
-
-		}
-		else {
-			this.wallHitX = this.wallHitXVertical;
-			this.wallHitY = this.wallHitYVertical;
-			this.distancia = distanciaVertical;
-
-			//PIXEL TEXTURA
-			var casilla = parseInt(this.wallHitY / tamTile) * tamTile;
-			this.pixelTextura = this.wallHitY - casilla;
-
-			//ID TEXTURA
-			this.idTextura = this.escenario.tile(this.wallHitX, this.wallHitY);
-		}
-
-
-		//CORREGIMOS EL EFECTO OJO DE PEZ
-		this.distancia = this.distancia * (Math.cos(this.anguloJugador - this.angulo));
-
-
-		//GUARDAMOS LA INFO EN EL ZBUFFER
-		zBuffer[this.columna] = this.distancia;
-
-
-	}
-
-
-
-
-
-
-
-	color() {
-		//https://www.w3schools.com/colors/colors_shades.asp
-
-		//36 posibles matices
-		var paso = 526344;		//Todos son múltiplos de #080808 = 526344(decimal);
-
-		var bloque = parseInt(canvasAlto / 36);
-		var matiz = parseInt(this.distancia / bloque);
-		var gris = matiz * paso;
-
-		var colorHex = "#" + gris.toString(16);		//convertimos a hexadecimal (base 16)
-
-		return (colorHex);
-	}
-
-
-
-
-
-
-	renderPared() {
-
-		var altoTile = 500;		//Es la altura que tendrá el muro al renderizarlo
-
-		var alturaMuro = (altoTile / this.distancia) * this.distanciaPlanoProyeccion;
-
-
-
-		//CALCULAMOS DONDE EMPIEZA Y ACABA LA LÍNEA, CENTRÁNDOLA EN PANTALLA
-		var y0 = parseInt(canvasAlto / 2) - parseInt(alturaMuro / 2);
-		var y1 = y0 + alturaMuro;
-		var x = this.columna;
-
-
-		//VARIAMOS LA ALTURA DE LA CÁMARA
-
-		var velocidad = 0.2;
-		var amplitud = 20;
-
-		var altura = 0;	//borrar cuando usemos el código de abajo
-
-
-		//DIBUJAMOS CON TEXTURA
-		var altoTextura = 64;
-
-		var alturaTextura = y0 - y1;
-		ctx.imageSmoothingEnabled = false;	//PIXELAMOS LA IMAGEN
-		ctx.drawImage(tiles, this.pixelTextura, ((this.idTextura - 1) * altoTextura), this.pixelTextura, 63, x, y1 + altura, 1, alturaTextura);
-
-	}
-
-
-
-
-	dibuja() {
-
-		//LANZAMOS EL RAYO
-		this.cast();
-
-
-
-		if (modo == 0) {
-			this.renderPared();
-		}
-
-
-		if (modo == 1) {
-			//LÍNEA DIRECCIÓN
-			var xDestino = this.wallHitX;
-			var yDestino = this.wallHitY;
-
-			this.ctx.beginPath();
-			this.ctx.moveTo(this.x, this.y);
-			this.ctx.lineTo(xDestino, yDestino);
-			this.ctx.strokeStyle = "red";
-			this.ctx.stroke();
-		}
-
-	}
-
-
+/** Toggles between 3D Raycasting view and 2D Map view. */
+function toggleRenderMode() {
+	renderMode = (renderMode === 0) ? 1 : 0;
 }
 
-
-
-//-----------------------------------------------------------------------
-
-const FOV = 60;
-
-
-class Player {
-
-	constructor(con, escenario, x, y) {
-
-		this.ctx = con;
-		this.escenario = escenario;
-
-		this.x = x;
-		this.y = y;
-
-		this.avanza = 0;	//-1 atrás, 1 adelante
-		this.gira = 0;		//-1 izquierda, 1 derecha
-
-		this.anguloRotacion = 0;
-
-		this.velGiro = convierteRadianes(3);		//3 grados en radianes
-		this.velMovimiento = 3;
-
-
-		//VISIÓN (RENDER)
-		this.numRayos = 500;		//Cantidad de rayos que vamos a castear (los mismos que tenga el ancho del canvas)
-		this.rayos = [];					//Array con todos los rayos
-
-
-		//CALCULAMOS EL ANGULO DE LOS RAYOS
-		var medioFOV = FOV / 2;
-		var incrementoAngulo = convierteRadianes(FOV / this.numRayos);
-		var anguloInicial = convierteRadianes(this.anguloRotacion - medioFOV);
-
-		var anguloRayo = anguloInicial;
-
-		//CREAMOS RAYOS
-		for (let i = 0; i < this.numRayos; i++) {
-
-			this.rayos[i] = new Rayo(this.ctx, this.escenario, this.x, this.y, this.anguloRotacion, anguloRayo, i);
-			anguloRayo += incrementoAngulo;
-		}
-
-	}
-
-	//LÓGICA DEL TECLADO
-	arriba() {
-		this.avanza = 1;
-	}
-
-	abajo() {
-		this.avanza = -1;
-	}
-
-	derecha() {
-		this.gira = 1;
-	}
-
-	izquierda() {
-		this.gira = -1;
-	}
-
-
-	avanzaSuelta() {
-		this.avanza = 0;
-	}
-
-	giraSuelta() {
-		this.gira = 0;
-	}
-
-
-
-	colision(x, y) {
-
-		var choca = false;
-
-		//AVERIGUAMOS LA CASILLA A LA QUE CORRESPONDEN NUESTRAS COORDENADAS
-		var casillaX = parseInt(x / this.escenario.anchoT);
-		var casillaY = parseInt(y / this.escenario.altoT);
-
-		if (this.escenario.colision(casillaX, casillaY))
-			choca = true;
-
-		return choca;
-	}
-
-
-
-	//ACTUALIZAMOS LA POSICIÓN
-	actualiza() {
-
-		//AVANZAMOS
-
-		var nuevaX = this.x + this.avanza * Math.cos(this.anguloRotacion) * this.velMovimiento;
-		var nuevaY = this.y + this.avanza * Math.sin(this.anguloRotacion) * this.velMovimiento;
-
-		if (!this.colision(nuevaX, nuevaY)) {
-			this.x = nuevaX;
-			this.y = nuevaY;
-		}
-
-		//GIRAMOS
-		this.anguloRotacion += this.gira * this.velGiro;
-		this.anguloRotacion = normalizaAngulo(this.anguloRotacion);	//normalizamos
-
-
-		//ACTUALIZAMOS LOS RAYOS
-		for (let i = 0; i < this.numRayos; i++) {
-			this.rayos[i].x = this.x;
-			this.rayos[i].y = this.y;
-			this.rayos[i].setAngulo(this.anguloRotacion);
-		}
-
-
-	}
-
-
-
-	dibuja() {
-
-		//ANTES DE DIBUJAR ACTUALIZAMOS
-		this.actualiza();
-
-
-
-
-		//RAYOS
-		for (let i = 0; i < this.numRayos; i++) {
-			this.rayos[i].dibuja();
-		}
-
-
-		if (modo == 1) {
-			//PUNTO
-			this.ctx.fillStyle = '#FFFFFF';
-			this.ctx.fillRect(this.x - 3, this.y - 3, 6, 6);
-
-
-			//LÍNEA DIRECCIÓN
-			var xDestino = this.x + Math.cos(this.anguloRotacion) * 40;    //40 es la longitud de la línea
-			var yDestino = this.y + Math.sin(this.anguloRotacion) * 40;
-
-			this.ctx.beginPath();
-			this.ctx.moveTo(this.x, this.y);
-			this.ctx.lineTo(xDestino, yDestino);
-			this.ctx.strokeStyle = "#FFFFFF";
-			this.ctx.stroke();
-		}
-
-
-	}
-
+// --- Canvas Rescaling ---
+/** Resizes the canvas element visually on the page (CSS pixels). */
+function rescaleCanvas() {
+    if (canvas) {
+	    canvas.style.width = "800px";
+        canvas.style.height = "800px";
+    }
 }
 
+// --- Object Initialization ---
+/** Initializes static sprite objects like ammo and health packs. */
+function initializeStaticSprites() {
+    if (typeof tileSize === 'undefined' || !gameContext ||
+        (typeof armorImage !== 'undefined' && (!armorImage || !armorImage.complete || !armorImage.naturalHeight)) ||
+        (typeof ammoPackImage !== 'undefined' && (!ammoPackImage || !ammoPackImage.complete || !ammoPackImage.naturalHeight)) ||
+        (typeof healthPackImage !== 'undefined' && (!healthPackImage || !healthPackImage.complete || !healthPackImage.naturalHeight))
+    ) {
+         console.warn("ASSETS: Item images, context, or tileSize not ready for static sprites. Retrying...");
+         setTimeout(initializeStaticSprites, 250); return;
+    }
 
-//------------------------------------------------------------------------------------
-//MODIFICAMOS EL ESTILO CSS (por eso usamos canvas.style.width y no canvas.width)
-function reescalaCanvas() {
-	canvas.style.width = "800px";
-	canvas.style.height = "800px";
+    const numArmor = typeof NUMBER_OF_ARMOR_PACKS !== 'undefined' ? NUMBER_OF_ARMOR_PACKS : 1;
+    const numAmmo = typeof NUMBER_OF_AMMO_PACKS !== 'undefined' ? NUMBER_OF_AMMO_PACKS : 4;
+    const numHealth = typeof NUMBER_OF_HEALTH_PACKS !== 'undefined' ? NUMBER_OF_HEALTH_PACKS : 3;
+
+    if (armorImage && armorImage.complete && armorImage.naturalHeight) {
+        const armorSpots = findRandomEmptySpotCoordinates(levelOneLayout, numArmor, currentlyOccupiedTileCoords);
+        armorSpots.forEach(spot => {
+            let worldX = spot.c * tileSize + tileSize / 2; let worldY = spot.r * tileSize + tileSize / 2;
+            let item = new Sprite(worldX, worldY, armorImage, gameContext);
+            item.type = 'armor'; item.worldHeight = tileSize * 0.6; sprites.push(item); currentlyOccupiedTileCoords.push(spot);
+        });
+    }
+    if (ammoPackImage && ammoPackImage.complete && ammoPackImage.naturalHeight) {
+        const ammoSpots = findRandomEmptySpotCoordinates(levelOneLayout, numAmmo, currentlyOccupiedTileCoords);
+        ammoSpots.forEach(spot => {
+            let worldX = spot.c * tileSize + tileSize / 2; let worldY = spot.r * tileSize + tileSize / 2;
+            let item = new Sprite(worldX, worldY, ammoPackImage, gameContext);
+            item.type = 'ammo'; item.worldHeight = tileSize / 3; sprites.push(item); currentlyOccupiedTileCoords.push(spot);
+        });
+    }
+    if (healthPackImage && healthPackImage.complete && healthPackImage.naturalHeight) {
+        const healthSpots = findRandomEmptySpotCoordinates(levelOneLayout, numHealth, currentlyOccupiedTileCoords);
+        healthSpots.forEach(spot => {
+            let worldX = spot.c * tileSize + tileSize / 2; let worldY = spot.r * tileSize + tileSize / 2;
+            let item = new Sprite(worldX, worldY, healthPackImage, gameContext);
+            item.type = 'health'; item.worldHeight = tileSize / 2.5; sprites.push(item); currentlyOccupiedTileCoords.push(spot);
+        });
+    }
 }
 
-//-------------------------------------------------------------------------------------
-var ray;
-var tiles;
-var imgArmor;
-var imgPlanta;
-var imgHudBackground;
-var imgAttackPlayer;
-var imgNeutralPlayer;
-
-var sprites = [];	//array con los sprites
-var zBuffer = [];	//array con la distancia a cada pared (con cada rayo)
-
-//-------------------------------------------------------------------------------------
-//SPRITES
-
-
-const FOVRadianes = convierteRadianes(FOV);
-const FOV_medio = convierteRadianes(FOV / 2);
-
-
-class Sprite {
-
-	constructor(x, y, imagen) {
-
-		this.x = x;
-		this.y = y;
-		this.imagen = imagen;
-
-		this.distancia = 0;
-		this.angulo = 0;
-
-		this.visible = false;
-
-	}
-
-
-
-	//CALCULAMOS EL ÁNGULO CON RESPECTO AL JUGADOR
-	calculaAngulo() {
-
-
-		var vectX = this.x - jugador.x;
-		var vectY = this.y - jugador.y;
-
-
-		var anguloJugadorObjeto = Math.atan2(vectY, vectX);
-		var diferenciaAngulo = jugador.anguloRotacion - anguloJugadorObjeto;
-
-
-
-		if (diferenciaAngulo < -3.14159)
-			diferenciaAngulo += 2.0 * 3.14159;
-		if (diferenciaAngulo > 3.14159)
-			diferenciaAngulo -= 2.0 * 3.14159;
-
-
-		diferenciaAngulo = Math.abs(diferenciaAngulo);
-
-
-		if (diferenciaAngulo < FOV_medio)
-			this.visible = true;
-		else
-			this.visible = false;
-
-
-	}
-
-
-
-	calculaDistancia() {
-		this.distancia = distanciaEntrePuntos(jugador.x, jugador.y, this.x, this.y)
-	}
-
-
-	actualizaDatos() {
-		this.calculaAngulo();
-		this.calculaDistancia();
-	}
-
-
-	dibuja() {
-
-		this.actualizaDatos();
-
-
-		//punto mapa (Borrar)
-		if (modo == 1) {
-			ctx.fillStyle = '#FFFFFF';
-			ctx.fillRect(this.x - 3, this.y - 3, 6, 6);
-		}
-
-
-		if (this.visible == true) {
-
-
-			var altoTile = 500;		//Es la altura que tendrá el sprite al renderizarlo
-			var distanciaPlanoProyeccion = (canvasAncho / 2) / Math.tan(FOV / 2);
-			var alturaSprite = (altoTile / this.distancia) * distanciaPlanoProyeccion;
-
-
-
-			//CALCULAMOS DONDE EMPIEZA Y ACABA LA LÍNEA, CENTRÁNDOLA EN PANTALLA (EN VERTICAL)
-			var y0 = parseInt(canvasAlto / 2) - parseInt(alturaSprite / 2);
-			var y1 = y0 + alturaSprite;
-
-
-			var altoTextura = 64;
-			var anchoTextura = 64;
-
-			var alturaTextura = y0 - y1;
-			var anchuraTextura = alturaTextura;	//LOS SPRITES SON CUADRADOS
-
-
-
-			//---------------------------------------------------------------------------
-			// CALCULAMOS LA COORDENADA X DEL SPRITE
-
-
-
-			var dx = this.x - jugador.x;
-			var dy = this.y - jugador.y;
-
-			var spriteAngle = Math.atan2(dy, dx) - jugador.anguloRotacion;
-
-			var viewDist = 500;
-
-
-			console.log(distanciaPlanoProyeccion);
-
-
-			var x0 = Math.tan(spriteAngle) * viewDist;
-			var x = (canvasAncho / 2 + x0 - anchuraTextura / 2);
-
-
-			//-----------------------------------------------------------------------------
-			ctx.imageSmoothingEnabled = false;	//PIXELAMOS LA IMAGEN
-
-
-			//proporción de anchura de X (según nos acerquemos, se verán más anchas las líneas verticales)
-			var anchuraColumna = alturaTextura / altoTextura;
-
-
-			//DIBUJAMOS EL SPRITE COLUMNA A COLUMNA PARA EVITAR QUE SE VEA TRAS UN MURO
-			//LO HAGO CON DOS BUCLES, PARA ASEGURARME QUE DIBUJO LÍNEA A LÍNEA Y NO TIRAS DE LA IMAGEN 
-
-			for (let i = 0; i < anchoTextura; i++) {
-				for (let j = 0; j < anchuraColumna; j++) {
-
-					var x1 = parseInt(x + ((i - 1) * anchuraColumna) + j);
-
-					//COMPARAMOS LA LÍNEA ACTUAL CON LA DISTANCIA DEL ZBUFFER PARA DECIDIR SI DIBUJAMOS
-					if (zBuffer[x1] > this.distancia) {
-						ctx.drawImage(this.imagen, i, 0, 1, altoTextura - 1, x1, y1, 1, alturaTextura);
-					}
-
-
-				}
-			}
-
-
-
-
-
-		}
-
-	}
-
+/** Initializes enemy objects. */
+function initializeEnemies() {
+    if (typeof tileSize === 'undefined' || !gameContext || !enemyImage || !enemyImage.complete || !enemyImage.naturalHeight) {
+        console.warn("ASSETS: Enemy base image, context, or tileSize not ready. Retrying enemy init...");
+        setTimeout(initializeEnemies, 250); return;
+    }
+    if (typeof enemyDemonAttackImage === 'undefined' || typeof enemyDeadImage === 'undefined' || typeof demonAttackOrbImage === 'undefined') {
+        console.warn("ASSETS: One or more enemy-specific image variables not declared. Retrying enemy init.");
+        setTimeout(initializeEnemies, 250); return;
+    }
+    if ((!enemyDemonAttackImage || !enemyDemonAttackImage.complete || !enemyDemonAttackImage.naturalHeight) ||
+        (!enemyDeadImage || !enemyDeadImage.complete || !enemyDeadImage.naturalHeight) ||
+        (!demonAttackOrbImage || !demonAttackOrbImage.complete || !demonAttackOrbImage.naturalHeight)) {
+        console.warn("ASSETS: Not all enemy specific images (attack, death, orb) are fully loaded. Retrying enemy init...");
+        setTimeout(initializeEnemies, 250); return;
+    }
+
+    const numEnemies = typeof NUMBER_OF_ENEMIES !== 'undefined' ? NUMBER_OF_ENEMIES : 5;
+    const enemySpots = findRandomEmptySpotCoordinates(levelOneLayout, numEnemies, currentlyOccupiedTileCoords);
+    enemySpots.forEach(spot => {
+        let worldX = spot.c * tileSize + tileSize / 2; let worldY = spot.r * tileSize + tileSize / 2;
+        let enemySpriteInstance = new Sprite(worldX, worldY, enemyImage, gameContext);
+        sprites.push(enemySpriteInstance);
+        enemies.push(new Enemy(worldX, worldY, enemyImage, gameContext, enemySpriteInstance));
+        currentlyOccupiedTileCoords.push(spot);
+    });
 }
 
-//-------------------------------------------------------------------------------------
+/** Renders all visible sprites using Painter's Algorithm (sorted by distance). */
+function renderVisibleSprites() {
+    if (!player || !sprites || !sprites.length) return;
 
+    for (let sprite of sprites) {
+        if (sprite.visible) {
+            sprite.calculateRenderData(player, FOV_RADIANS_HALF, canvasWidth, canvasHeight, tileSize);
+        } else {
+            sprite.distanceToPlayer = Infinity;
+        }
+    }
+	sprites.sort((obj1, obj2) => obj2.distanceToPlayer - obj1.distanceToPlayer);
 
-
-
-
-//ALGORITMO DEL PINTOR, ORDENAMOS LOS SPRITES DE MÁS LEJANO AL JUGADOR A MÁS CERCANO
-
-function renderSprites() {
-
-
-	//NOTA: HACER EL ALGORITMO DE ORDENACIÓN MANUAL
-
-	//ALGORITMO DE ORDENACIÓN SEGÚN DISTANCIA (ORDEN DESCENDENTE)
-	//https://davidwalsh.name/array-sort
-
-	sprites.sort(function (obj1, obj2) {
-		// Ascending: obj1.distancia - obj2.distancia
-		// Descending: obj2.distancia - obj1.distancia
-		return obj2.distancia - obj1.distancia;
-	});
-
-
-
-
-	//DIBUJAMOS LOS SPRITES UNO POR UNO
-	for (a = 0; a < sprites.length; a++) {
-		sprites[a].dibuja();
+	for (let sprite of sprites) {
+        if (sprite.visible) {
+		    sprite.draw(zBuffer, AMBIENT_LIGHT_LEVEL, PLAYER_LIGHT_RADIUS, LIGHT_FALLOFF_SHARPNESS, player);
+        }
 	}
-
 }
 
+// --- Asset Loading and Game Initialization ---
+let assetsToLoadCount = 0;
+let assetsLoadedCount = 0;
 
-function inicializaSprites() {
-
-	//CARGAMOS SPRITES
-	imgArmor = new Image();
-	imgArmor.src = "img/armor.png";
-
-	imgPlanta = new Image();
-	imgPlanta.src = "img/planta.png";
-
-	//CREAMOS LOS OBJETOS PARA LAS IMÁGENES
-	sprites[0] = new Sprite(300, 120, imgArmor);
-	sprites[1] = new Sprite(150, 150, imgArmor);
-	sprites[2] = new Sprite(320, 300, imgPlanta);
-	sprites[3] = new Sprite(300, 380, imgPlanta);
-
+/** Callback for successfully loaded asset. */
+function onAssetLoaded(assetName) {
+    assetsLoadedCount++;
+    if (assetsLoadedCount >= assetsToLoadCount) {
+        initializeGameObjects();
+    }
+}
+/** Callback for asset load error. */
+function onAssetLoadError(assetName, src) {
+    console.error(`ASSET_LOAD: FAILURE - Failed to load ${assetName} from ${src}`);
+    assetsLoadedCount++;
+    if (assetsLoadedCount >= assetsToLoadCount) {
+        console.warn("ASSET_LOAD: Proceeding with game initialization despite asset load error(s).");
+        initializeGameObjects();
+    }
 }
 
+/** Initializes core game objects after assets are loaded. */
+function initializeGameObjects() {
+    if (typeof tileSize === 'undefined' || typeof canvasWidth === 'undefined' || typeof canvasHeight === 'undefined') {
+        console.error("INIT_ERROR: Essential config constants (tileSize, canvasWidth, canvasHeight) are undefined. Retrying...");
+        setTimeout(initializeGameObjects, 250);
+        return;
+    }
 
-//============================================================================ 
-function inicializa() {
+    gameLevel = new Level(canvas, gameContext, levelOneLayout);
+    currentlyOccupiedTileCoords = [];
 
+    let playerStartSpot = findRandomEmptySpotCoordinates(levelOneLayout, 1, currentlyOccupiedTileCoords)[0];
+    if (playerStartSpot) {
+        player = new Player(gameContext, gameLevel, playerStartSpot.c * tileSize + tileSize/2, playerStartSpot.r * tileSize + tileSize/2);
+        currentlyOccupiedTileCoords.push(playerStartSpot);
+    } else {
+        player = new Player(gameContext, gameLevel, 1.5*tileSize, 1.5*tileSize); // Fallback start position
+        currentlyOccupiedTileCoords.push({r: Math.floor(1.5), c: Math.floor(1.5)});
+        console.warn("INIT: Player fallback start position used.");
+    }
 
+    zBuffer = new Array(canvasWidth).fill(Infinity);
+    sprites = []; enemies = []; playerProjectiles = []; enemyProjectiles = []; risingSpriteEffects = [];
+
+    initializeStaticSprites();
+    initializeEnemies();
+
+    setInterval(mainGameLoop, 1000 / (typeof FPS !== 'undefined' ? FPS : 50) );
+    rescaleCanvas();
+
+    if (typeof playSoundEffect === 'function') {
+        const laughIntervalMs = 10000;
+        if (enemyLaughIntervalId) clearInterval(enemyLaughIntervalId);
+        enemyLaughIntervalId = setInterval(() => {
+            if (player && player.health > 0 && enemies.some(e => e.isAlive)) {
+                playSoundEffect("music/enemyLaugh.mp3", 0.25);
+            }
+        }, laughIntervalMs);
+    }
+
+    const musicElement = document.getElementById('inGameMusic');
+    if (musicElement) {
+        musicElement.volume = 0.25;
+        let playPromise = musicElement.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                gameMusicStarted = true;
+            }).catch(error => {
+            });
+        }
+    } else {
+        console.warn("MUSIC: inGameMusic element not found in HTML.");
+    }
+}
+
+/**
+ * Main initialization function for the game. Sets up canvas, context, and starts asset loading.
+ * This is typically called once when the game is ready to start (e.g., from menu.js).
+ */
+function initializeGame() {
 	canvas = document.getElementById('canvas');
-	ctx = canvas.getContext('2d');
+	if (!canvas) { console.error("SETUP: Canvas element not found!"); return; }
+	gameContext = canvas.getContext('2d');
+	if (!gameContext) { console.error("SETUP: Failed to get 2D context!"); return; }
 
+    if (typeof canvasWidth === 'undefined' || typeof canvasHeight === 'undefined') {
+        console.error("SETUP_ERROR: canvasWidth or canvasHeight from config.js is undefined. Retrying...");
+        setTimeout(initializeGame, 250);
+        return;
+    }
+	canvas.width = canvasWidth;
+	canvas.height = canvasHeight;
 
-	//CARGAMOS TILES
-	tiles = new Image();
-	tiles.src = "img/walls.png";
+    const imageAssetDefinitions = [
+        { varName: 'wallTexturesImage', src: "img/walls.png" },
+        { varName: 'hudBackgroundImage', src: "img/hud_background.png" },
+        { varName: 'playerAttackStateImage', src: "img/attack_player.png" },
+        { varName: 'playerNeutralStateImage', src: "img/neutral_player.png" },
+        { varName: 'enemyImage', src: "img/enemyDemon.png" },
+        { varName: 'armorImage', src: "img/armor.png" },
+        { varName: 'enemyDeadImage', src: "img/enemyDemonDead.png" },
+        { varName: 'playerAttackOrbImage', src: "img/playerAttackOrb.png" },
+        { varName: 'enemyDeadAngelImage', src: "img/enemyDeadAngel.png" },
+        { varName: 'ammoPackImage', src: "img/ammoPack.png" },
+        { varName: 'healthPackImage', src: "img/healthPack.png" },
+        { varName: 'enemyDemonAttackImage', src: "img/enemyDemonAttack.png" },
+        { varName: 'demonAttackOrbImage', src: "img/demonAttackOrb.png" }
+    ];
+    assetsToLoadCount = imageAssetDefinitions.length + NUMBER_OF_TORCH_FRAMES;
+    assetsLoadedCount = 0;
 
-	//CARGAMOS EL HUD
-	imgHudBackground = new Image();
-	imgHudBackground.src = "img/hud_background.png";
+    if (assetsToLoadCount === 0) { initializeGameObjects(); return; }
 
-	//CARGAMOS IMAGEN DEL JUGADOR EN ESTADO NEUTRAL
-	imgNeutralPlayer = new Image();
-	imgNeutralPlayer.src = "img/neutral_player.png";
+    imageAssetDefinitions.forEach(assetInfo => {
+        window[assetInfo.varName] = new Image();
+        window[assetInfo.varName].onload = () => onAssetLoaded(assetInfo.varName);
+        window[assetInfo.varName].onerror = () => onAssetLoadError(assetInfo.varName, assetInfo.src);
+        window[assetInfo.varName].src = assetInfo.src;
+    });
 
-	//CARGAMOS IMAGEN DEL JUGADOR ATACANDO
-	imgNeutralPlayer = new Image();
-	imgNeutralPlayer.src = "img/attack_player.png";
-
-
-	//MODIFICA EL TAMAÑO DEL CANVAS
-	canvas.width = canvasAncho;
-	canvas.height = canvasAlto;
-
-
-	escenario = new Level(canvas, ctx, nivel1);
-	jugador = new Player(ctx, escenario, 100, 100);
-	jugador.vida = 100;
-
-
-
-	//CARGAMOS LOS SPRITES DESPUÉS DEL ESCENARIO Y EL JUGADOR
-	inicializaSprites();
-
-
-	//EMPEZAMOS A EJECUTAR EL BUCLE PRINCIPAL
-	setInterval(function () { principal(); }, 1000 / FPS);
-
-	//AMPLIAMOS EL CANVAS CON CSS
-	reescalaCanvas();
+    for (let i = 0; i < NUMBER_OF_TORCH_FRAMES; i++) {
+        let frameImage = new Image();
+        let frameName = `torchFrame${i + 1}`;
+        frameImage.onload = () => {
+            onAssetLoaded(frameName);
+        };
+        frameImage.onerror = () => {
+            onAssetLoadError(frameName, `img/torch/torch${i + 1}.png`);
+        };
+        frameImage.src = `img/torch/torch${i + 1}.png`;
+        torchFrames[i] = frameImage;
+    }
 }
 
-
-
-function borraCanvas() {
-	canvas.width = canvas.width;
-	canvas.height = canvas.height;
+// --- Drawing Functions ---
+/** Clears the entire canvas. */
+function clearCanvas() {
+    if (gameContext && typeof canvasWidth !== 'undefined' && typeof canvasHeight !== 'undefined') {
+        gameContext.clearRect(0, 0, canvasWidth, canvasHeight);
+    }
 }
 
+/** Draws the floor and ceiling with lighting. */
+function drawFloorAndCeiling() {
+    if (!gameContext) return;
 
-//PINTA COLORES BÁSICOS PARA SUELO Y TECHO
-function sueloTecho() {
-	ctx.fillStyle = '#666666';
-	ctx.fillRect(0, 0, 500, 250);
+    const baseAmbient = typeof AMBIENT_LIGHT_LEVEL !== 'undefined' ? AMBIENT_LIGHT_LEVEL : 0.05;
 
-	ctx.fillStyle = '#752300';
-	ctx.fillRect(0, 250, 500, 500);
+    const ceilingBaseBrightness = Math.floor(baseAmbient * 30);
+    const ceilingHex = Math.max(0, Math.min(255, ceilingBaseBrightness)).toString(16).padStart(2, '0');
+	gameContext.fillStyle = `#${ceilingHex}${ceilingHex}${ceilingHex}`;
+	gameContext.fillRect(0, 0, canvasWidth, canvasHeight / 2);
 
+    const pitchBlackFloor = "#050505";
+	gameContext.fillStyle = pitchBlackFloor;
+	gameContext.fillRect(0, canvasHeight / 2, canvasWidth, canvasHeight / 2);
+
+    if (renderMode === 0 && player && player.health > 0) {
+        const lightScreenX = canvasWidth / 2;
+        const gradientCenterY = canvasHeight * 1.0;
+        const screenLightRadiusCore = canvasWidth * 0.1;
+        const screenLightRadiusMax = canvasWidth * 0.4;
+
+        try {
+            var gradient = gameContext.createRadialGradient(
+                lightScreenX, gradientCenterY, screenLightRadiusCore,
+                lightScreenX, gradientCenterY, screenLightRadiusMax
+            );
+            const lightR = 180, lightG = 160, lightB = 100;
+            gradient.addColorStop(0,    `rgba(${lightR}, ${lightG}, ${lightB}, 0.65)`);
+            gradient.addColorStop(0.3,  `rgba(${lightR}, ${lightG}, ${lightB}, 0.50)`);
+            gradient.addColorStop(0.7,  `rgba(${lightR}, ${lightG}, ${lightB}, 0.15)`);
+            gradient.addColorStop(1,    `rgba(${lightR}, ${lightG}, ${lightB}, 0.00)`);
+
+            gameContext.fillStyle = gradient;
+            gameContext.fillRect(0, canvasHeight / 2, canvasWidth, canvasHeight / 2);
+        } catch (e) {
+            console.error("Error creating or applying floor gradient:", e);
+        }
+    }
 }
 
+/** Draws the Heads-Up Display (HUD). */
+function drawHUD() {
+    if (!gameContext || !player) return;
 
-// Función para dibujar la barra de información (HUD)
-function dibujaHUD() {
+    const hudDisplayHeight = 100;
 
-	if (imgHudBackground.complete && imgHudBackground.naturalHeight !== 0) {
-		ctx.drawImage(imgHudBackground, 0, canvasAlto - 100, canvasAncho, 100);
+    if (hudBackgroundImage && hudBackgroundImage.complete && hudBackgroundImage.naturalHeight !== 0) {
+        gameContext.drawImage(hudBackgroundImage, 0, canvasHeight - hudDisplayHeight, canvasWidth, hudDisplayHeight);
+    } else {
+        gameContext.fillStyle = "rgba(50, 30, 20, 0.9)";
+        gameContext.fillRect(0, canvasHeight - hudDisplayHeight, canvasWidth, hudDisplayHeight);
+    }
+
+    const playerIconImg = player.playerActionState === 1 ? playerAttackStateImage : playerNeutralStateImage;
+    if (playerIconImg && playerIconImg.complete && playerIconImg.naturalHeight !== 0) {
+        const iconWidth = 80, iconHeight = 73;
+        const iconPosX = (canvasWidth / 2) - (iconWidth / 2);
+        const iconPosY = canvasHeight - hudDisplayHeight + (hudDisplayHeight - iconHeight) / 2 + 3;
+        gameContext.drawImage(playerIconImg, 0, 0, 64, 64, iconPosX, iconPosY, iconWidth, iconHeight);
+    }
+
+    const hudFont = 'Doom';
+    const textColor = '#E0D0B0';
+    gameContext.fillStyle = textColor;
+    gameContext.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    gameContext.shadowOffsetX = 2; gameContext.shadowOffsetY = 2; gameContext.shadowBlur = 2;
+
+    const leftPanelX = 35;
+    const ammoY = canvasHeight - hudDisplayHeight + 35;
+    const scoreY = canvasHeight - hudDisplayHeight + 65;
+    gameContext.font = `bold 34px ${hudFont}`;
+    gameContext.textAlign = "center";
+    gameContext.fillText(player.ammo, leftPanelX + 25, ammoY + 30);
+    gameContext.fillText(player.score, leftPanelX + 117, scoreY);
+
+    const rightPanelX = canvasWidth - 113;
+    const healthBarY = canvasHeight - hudDisplayHeight + 45;
+    const healthBarWidth = 100, healthBarHeight = 18;
+    gameContext.fillStyle = "#402010";
+    gameContext.fillRect(rightPanelX, healthBarY, healthBarWidth, healthBarHeight);
+    let healthColor = (player.health > 66) ? '#00AA00' : (player.health > 33) ? '#AAAA00' : '#AA0000';
+    gameContext.fillStyle = healthColor;
+    gameContext.fillRect(rightPanelX + 2, healthBarY + 2, (Math.max(0,player.health)/100) * (healthBarWidth - 4), healthBarHeight - 4);
+
+    gameContext.shadowColor = 'transparent'; gameContext.shadowOffsetX = 0; gameContext.shadowOffsetY = 0; gameContext.shadowBlur = 0;
+
+    if (player.health <= 0) {
+        gameContext.fillStyle = "rgba(0, 0, 0, 0.75)";
+        gameContext.fillRect(0, 0, canvasWidth, canvasHeight - hudDisplayHeight);
+        gameContext.textAlign = "center";
+        gameContext.shadowColor = 'black'; gameContext.shadowOffsetX = 3; gameContext.shadowOffsetY = 3; gameContext.shadowBlur = 5;
+        gameContext.font = `bold 52px ${hudFont}`;
+        gameContext.fillStyle = "red";
+        gameContext.fillText("YOU DIED", canvasWidth / 2, canvasHeight / 2 - 30);
+        gameContext.shadowColor = 'transparent'; gameContext.shadowOffsetX = 0; gameContext.shadowOffsetY = 0; gameContext.shadowBlur = 0;
+    }
+}
+
+/** Draws the animated player weapon in the foreground. */
+function drawTorchAnimation() {
+    if (!gameContext || !torchFrames || torchFrames.length === 0 || !torchFrames[currentTorchFrameIndex]) {
+        return;
+    }
+    const currentFrameImage = torchFrames[currentTorchFrameIndex];
+    if (!currentFrameImage.complete || !currentFrameImage.naturalHeight) {
+        return;
+    }
+
+    const originalWidth = currentFrameImage.naturalWidth;
+    const originalHeight = currentFrameImage.naturalHeight;
+    const scale = 3.5;
+    const scaledWidth = originalWidth * scale;
+    const scaledHeight = originalHeight * scale;
+    const posX = (canvasWidth - scaledWidth) / 10;
+    const hudDisplayHeight = 120;
+    const posY = canvasHeight - scaledHeight - hudDisplayHeight + 20;
+
+    gameContext.imageSmoothingEnabled = false;
+    gameContext.drawImage(
+        currentFrameImage, 0, 0, originalWidth, originalHeight,
+        posX, posY, scaledWidth, scaledHeight
+    );
+}
+
+// --- Main Game Loop ---
+/**
+ * The main game loop, called repeatedly by setInterval.
+ * Updates game state, handles rendering, and manages game logic.
+ */
+function mainGameLoop() {
+    if (!gameContext || !gameLevel || assetsLoadedCount < assetsToLoadCount) {
+        if (gameContext && typeof canvasWidth !== 'undefined' && typeof canvasHeight !== 'undefined') {
+            clearCanvas(); gameContext.fillStyle = "black"; gameContext.fillRect(0,0,canvasWidth,canvasHeight);
+            gameContext.font = "20px Arial"; gameContext.fillStyle = "white"; gameContext.textAlign = "center";
+            gameContext.fillText(`Loading assets... (${assetsLoadedCount}/${assetsToLoadCount})`, canvasWidth/2, canvasHeight/2);
+        } return;
+    }
+    if (!player) { return; }
+
+    if (damageFlashAlpha > 0) {
+        const elapsed = Date.now() - damageFlashStartTime;
+        const flashDuration = typeof DAMAGE_FLASH_DURATION !== 'undefined' ? DAMAGE_FLASH_DURATION : 250;
+        const maxAlpha = typeof DAMAGE_FLASH_MAX_ALPHA !== 'undefined' ? DAMAGE_FLASH_MAX_ALPHA : 0.4;
+        damageFlashAlpha = (elapsed < flashDuration) ? maxAlpha * (1 - (elapsed / flashDuration)) : 0;
+        damageFlashAlpha = Math.max(0, damageFlashAlpha);
+    }
+
+    const currentTime = Date.now();
+    const torchAnimSpeed = typeof TORCH_ANIMATION_SPEED !== 'undefined' ? TORCH_ANIMATION_SPEED : 80;
+    if (currentTime - lastTorchFrameUpdateTime > torchAnimSpeed) {
+        currentTorchFrameIndex++;
+        if (currentTorchFrameIndex >= NUMBER_OF_TORCH_FRAMES) {
+            currentTorchFrameIndex = 0;
+        }
+        lastTorchFrameUpdateTime = currentTime;
+    }
+
+    if (player.health > 0) {
+        player.update();
+    }
+    enemies.forEach(enemy => enemy.update());
+
+    const updateAndFilterActiveItems = (itemArray, globalSpriteList) => itemArray.filter(item => {
+        item.update();
+        if (!item.isActive && item.sprite) {
+            const spriteIndex = globalSpriteList.indexOf(item.sprite);
+            if (spriteIndex > -1) globalSpriteList.splice(spriteIndex, 1);
+        }
+        return item.isActive;
+    });
+    playerProjectiles = updateAndFilterActiveItems(playerProjectiles, sprites);
+    enemyProjectiles = updateAndFilterActiveItems(enemyProjectiles, sprites);
+    risingSpriteEffects = updateAndFilterActiveItems(risingSpriteEffects, sprites);
+
+	clearCanvas();
+    zBuffer.fill(Infinity);
+
+	if (renderMode === 1) {
+		if(gameLevel) gameLevel.drawMinimap();
+        if(player) player.draw();
+        enemies.forEach(e => e.drawOnMap(gameContext));
+        if(gameContext) {
+            playerProjectiles.forEach(p => { if(p.isActive){gameContext.fillStyle='cyan';gameContext.beginPath();gameContext.arc(p.x,p.y,p.radius||3,0,2*Math.PI);gameContext.fill();}});
+            enemyProjectiles.forEach(ep => { if(ep.isActive){gameContext.fillStyle='magenta';gameContext.beginPath();gameContext.arc(ep.x,ep.y,ep.radius||3,0,2*Math.PI);gameContext.fill();}});
+        }
+        if(sprites.length > 0) renderVisibleSprites();
 	} else {
-		ctx.fillStyle = '#000000'; // Color de respaldo
-		ctx.fillRect(0, canvasAlto - 100, canvasAncho, 100);
+		if(gameContext) drawFloorAndCeiling();
+        if(player) player.draw();
+        if(sprites.length > 0) renderVisibleSprites();
 	}
 
-	if (imgNeutralPlayer.complete && imgNeutralPlayer.naturalHeight !== 0) {
-		ctx.drawImage(imgNeutralPlayer, 0, 0, 64, 64, 205, 407, 90, 83);
-	} else {
-		ctx.fillStyle = '#000000'; // Color de respaldo
-		ctx.fillRect(0, canvasAlto - 100, canvasAncho, 100);
-	}
+    if (damageFlashAlpha > 0 && renderMode === 0) {
+        gameContext.fillStyle = `rgba(255, 0, 0, ${damageFlashAlpha})`;
+        gameContext.fillRect(0, 0, canvasWidth, canvasHeight - 100); 
+    }
 
-	// Añadimos texto para la información
-	ctx.fillStyle = '#FFFFFF';
-	ctx.font = '14px Arial';
+    if (renderMode === 0 && player && player.health > 0) {
+        drawTorchAnimation();
+    }
 
-	// Vida
-	ctx.fillText('VIDA: ' + jugador.vida, 407, canvasAlto - 50);x
-
-	// Barra de vida
-	// Marco de la barra
-	ctx.strokeStyle = '#FFFFFF';
-	ctx.strokeRect(415, canvasAlto - 35, 50, 10);
-	// Relleno de la barra (verde si > 50%, amarillo si > 25%, rojo si <= 25%)
-	if (jugador.vida > 50) {
-		ctx.fillStyle = '#00FF00'; // Verde
-	} else if (jugador.vida > 25) {
-		ctx.fillStyle = '#FFFF00'; // Amarillo
-	} else {
-		ctx.fillStyle = '#FF0000'; // Rojo
-	}
-	var anchoBarra = (jugador.vida / 100) * 50;
-	ctx.fillRect(415, canvasAlto - 35, anchoBarra, 10);
-
-	// Munición
-	ctx.fillStyle = '#FFFFFF';
-	ctx.fillText('MUNICIÓN: ' + jugador.municion, 10, canvasAlto - 55);
-
-	// Puntaje
-	ctx.fillText('PUNTAJE: ' + jugador.puntaje, 10, canvasAlto - 35);
-}
-
-
-function principal() {
-	borraCanvas();
-
-	if (modo == 1)
-		escenario.dibuja();
-
-	if (modo == 0)
-		sueloTecho();
-
-	jugador.dibuja();
-
-
-	renderSprites();
-
-	// Dibujamos el HUD después de renderizar todo lo demás
-	dibujaHUD();
-
+	if(gameContext && player) drawHUD();
 }
